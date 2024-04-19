@@ -135,20 +135,7 @@ class Trainer:
             )
         )
 
-    def train(self, modeldir, load_path=None, step=None):
-        # Save the config info
-        with open(
-                os.path.join(
-                    modeldir,
-                    "config-{}.json".format(
-                        datetime.datetime.now().strftime("%Y%m%dT%H%M%S%Z")
-                    ),
-                ),
-                "w",
-        ) as f:
-            json.dump(self.config, f, sort_keys=True, indent=4)
-
-        # slight difference here vs. unrefactored train: The init_random starts over here. Could be fixed if it was important by saving random state at end of init
+    def _load_optimizer(self, config):
         with self.init_random:
             # We may be able to move optimizer and lr_scheduler to __init__ instead. Empirically it works fine. I think that's because saver.restore
             # resets the state by calling optimizer.load_state_dict.
@@ -181,7 +168,121 @@ class Trainer:
                 self.config.get("lr_scheduler", {"name": "noop"}),
                 optimizer=optimizer,
             )
+            
+            trainer = None
+        
+        return optimizer, lr_scheduler, trainer 
 
+    def _report(self, last_step, losses, optimizer):
+        # Report metrics
+        cur_loss = np.mean(losses)
+        cur_lrs = [
+            {"name": param_group["name"], "value": param_group["lr"]}
+            for param_group in optimizer.param_groups
+        ]
+        
+        if last_step % self.config["train"]["report_every_n"] == 0:
+            self._log_stats(
+                last_step,
+                "train",
+                {
+                    "step": last_step,
+                },
+            )
+            self._log_loss(last_step, cur_loss)
+            self._log_lr(last_step, cur_lrs)
+                    
+    def _evaluate(self, last_step, saver, modeldir):
+        # Evaluate model
+        if last_step % self.config["train"]["eval_every_n"] == 0 \
+                and last_step != 0:
+            # try:
+            #     val_all_exact, train_all_exact = _evaluate_model()
+            #     print('val_all_exact: ', val_all_exact)
+            # except:
+            val_all_exact, train_all_exact = 0, 0
+            # print('infer error')
+            # Run saver
+            saver.save(
+                modeldir,
+                last_step,
+                is_best=val_all_exact >= best_val_all_exact,
+                best_validation_metric=max(val_all_exact, best_val_all_exact)
+            )
+            best_val_all_exact = max(val_all_exact, best_val_all_exact)
+
+    def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step):
+        # Counter for grad aggregation
+        grad_accumulation_counter = 0
+        losses = []
+        
+        # 4. Start training loop
+        with self.data_random:
+            for batch in train_data_loader:
+                # Quit if too long
+                if last_step >= self.config["train"]["max_steps"]:
+                    break
+
+                # Compute and apply gradient
+                with self.model_random:
+                    with autocast(enabled=self.config["train"]["amp_enabled"]):
+                        loss = self.model.compute_loss(batch)
+
+                if loss:
+                    with self.model_random:
+                        with autocast(enabled=self.config["train"]["amp_enabled"]):
+                            loss /= self.config["train"]["n_grad_accumulation_steps"]
+                    scaler.scale(loss).backward()
+
+                    losses.append(
+                        loss.item() * self.config["train"]["n_grad_accumulation_steps"]
+                    )
+
+                    grad_accumulation_counter += 1
+                    # Update params every `n_grad_accumulation_steps` times
+                    if (
+                            grad_accumulation_counter
+                            % self.config["train"]["n_grad_accumulation_steps"]
+                            == 0
+                    ):
+                        # may call unscale_ here to allow clipping unscaled gradients,
+                        # see https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation
+                        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                        lr_scheduler.update_lr(last_step)
+                        try:
+                            scaler.step(optimizer)
+                            scaler.update()
+                        except RuntimeError as e:
+                            self.logger.log(
+                                f"Caught error '{e}' while updating model. Continuing training ..."
+                            )
+                        optimizer.zero_grad()
+
+                        last_step += 1
+
+                        self._report(last_step=last_step, losses=losses, optimizer=optimizer)
+                        self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir)
+                
+                        # Reset the list of losses
+                        losses = []
+                     
+    def train(self, modeldir, load_path=None, step=None):
+        # Save the config info
+        with open(
+                os.path.join(
+                    modeldir,
+                    "config-{}.json".format(
+                        datetime.datetime.now().strftime("%Y%m%dT%H%M%S%Z")
+                    ),
+                ),
+                "w",
+        ) as f:
+            json.dump(self.config, f, sort_keys=True, indent=4)
+
+        # slight difference here vs. unrefactored train: The init_random starts over here. Could be fixed if it was important by saving random state at end of init
+        optimizer, lr_scheduler, trainer = self._load_optimizer(self.config)
+       
         # 1.5. Initialize Automatic Mixed Precision (AMP) training
         scaler = GradScaler(enabled=self.config["train"]["amp_enabled"])
 
@@ -266,93 +367,16 @@ class Trainer:
                 val_all_exact = self._eval_model(modeldir, last_step, val_data_loader, "val")
             return val_all_exact, train_all_exact
 
-        # Counter for grad aggregation
-        grad_accumulation_counter = 0
-        losses = []
-
-        # 4. Start training loop
-        with self.data_random:
-            self.logger.log("Enter training loop")
-            for batch in train_data_loader:
-                # Quit if too long
-                if last_step >= self.config["train"]["max_steps"]:
-                    break
-
-                # Compute and apply gradient
-                with self.model_random:
-                    with autocast(enabled=self.config["train"]["amp_enabled"]):
-                        loss = self.model.compute_loss(batch)
-
-                if loss:
-                    with self.model_random:
-                        with autocast(enabled=self.config["train"]["amp_enabled"]):
-                            loss /= self.config["train"]["n_grad_accumulation_steps"]
-                    scaler.scale(loss).backward()
-
-                    losses.append(
-                        loss.item() * self.config["train"]["n_grad_accumulation_steps"]
-                    )
-
-                    grad_accumulation_counter += 1
-                    # Update params every `n_grad_accumulation_steps` times
-                    if (
-                            grad_accumulation_counter
-                            % self.config["train"]["n_grad_accumulation_steps"]
-                            == 0
-                    ):
-                        # may call unscale_ here to allow clipping unscaled gradients,
-                        # see https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation
-                        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-                        lr_scheduler.update_lr(last_step)
-                        try:
-                            scaler.step(optimizer)
-                            scaler.update()
-                        except RuntimeError as e:
-                            self.logger.log(
-                                f"Caught error '{e}' while updating model. Continuing training ..."
-                            )
-                        optimizer.zero_grad()
-
-                        last_step += 1
-
-                        # Report metrics
-                        cur_loss = np.mean(losses)
-                        cur_lrs = [
-                            {"name": param_group["name"], "value": param_group["lr"]}
-                            for param_group in optimizer.param_groups
-                        ]
-                        if last_step % self.config["train"]["report_every_n"] == 0:
-                            self._log_stats(
-                                last_step,
-                                "train",
-                                {
-                                    "step": last_step,
-                                },
-                            )
-                            self._log_loss(last_step, cur_loss)
-                            self._log_lr(last_step, cur_lrs)
-                        # Evaluate model
-                        if last_step % self.config["train"]["eval_every_n"] == 0 \
-                                and last_step != 0:
-                            # try:
-                            #     val_all_exact, train_all_exact = _evaluate_model()
-                            #     print('val_all_exact: ', val_all_exact)
-                            # except:
-                            val_all_exact, train_all_exact = 0, 0
-                            # print('infer error')
-                            # Run saver
-                            saver.save(
-                                modeldir,
-                                last_step,
-                                is_best=val_all_exact >= best_val_all_exact,
-                                best_validation_metric=max(val_all_exact, best_val_all_exact)
-                            )
-                            best_val_all_exact = max(val_all_exact, best_val_all_exact)
-
-                        # Reset the list of losses
-                        losses = []
-
+        self._update(
+            train_data_loader=train_data_loader,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            scaler=scaler,
+            saver=saver,
+            modeldir=modeldir,
+            last_step=last_step
+        )
+             
     @staticmethod
     def _yield_batches_from_epochs(loader):
         while True:
