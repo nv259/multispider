@@ -20,10 +20,10 @@ local bert_path = 'xlm-roberta-large';
         val_vi: (import '../data/val_vi.libsonnet')(prefix=PREFIX),
     },
     lr_scheduler: {
-        "decay_steps": 98000,
+        "decay_steps": 90,
         "end_lr": 0,
         "name": "bert_warmup_polynomial",
-        "num_warmup_steps": 2000,
+        "num_warmup_steps": 20,
         "power": 1,
         "start_lr": 0.0001,
         "bert_factor": 8
