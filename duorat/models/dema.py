@@ -16,6 +16,10 @@ class InterDEMA(LMDuoRATModel):
     A LM DuoRAT model with first layer is clone multiple times 
     """ 
     def __init__(self, preprocess, encoder, decoder, num_particles=5):
+        
+        # ascertain the number of encoder remain unchanged
+        encoder["rat_num_layers"] = encoder["rat_num_layer"] - 1 
+        
         super().__init__(
             preproc=preprocess,
             encoder=encoder,
