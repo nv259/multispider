@@ -35,13 +35,6 @@ from train import Logger, Trainer
 
 
 class DEMATrainer(Trainer):
-    def load_train_config(self):
-        # TODO: inspect config file
-
-        if self.train_config.n_grad_accumulation_steps > 1:
-            self.logger.warn("Batch accumulation is used only at MAML-step level")
-            raise NotImplementedError
-
     def get_kernel(self, params: torch.Tensor, num_particles):
         """
         Compute the RBF kernel for the input
@@ -157,9 +150,7 @@ class DEMATrainer(Trainer):
         )
 
         initial_encoder_len = len(list(self.model.initial_encoder.parameters()))
-        particle_len = len(
-            list(self.model.list_first_rats[0].parameters())
-        )  # TODO: ascertain this
+        particle_len = len(list(self.model.list_first_rats[0].parameters()))
         encoder_len = len(list(self.model.encoder_rat_layers.parameters()))
 
         ret_dict = {}
@@ -180,25 +171,39 @@ class DEMATrainer(Trainer):
             final_losses.append(loss.item())
             loss /= self.config["train"]["n_grad_accumulation_steps"]
 
-            grads = torch.autograd.grad(
-                loss,
-                list(self.model.initial_encoder.parameters())
-                + list(self.model.list_first_rats[i].parameters())
-                + list(self.model.encoder_rat_layers.parameters())
-                + list(self.model.decoder_rat_layers.parameters()),
+            params_list = list(self.model.list_first_rats[i].parameters()) + list(
+                param
+                for name, param in self.model.named_parameters()
+                if "list_first_rats" not in name
             )
 
-            initial_encoder_grads = grads[:initial_encoder_len]
-            particle_grads = grads[
-                initial_encoder_len : initial_encoder_len + particle_len
-            ]
-            encoder_grads = grads[
-                initial_encoder_len
-                + particle_len : initial_encoder_len
-                + particle_len
-                + encoder_len
-            ]
-            decoder_grads = grads[initial_encoder_len + particle_len + encoder_len :]
+            # NOTE: shorten grads calculation
+            # WARNING: ascertain whether torch.autograd.grad return w.r.t inputs' order
+            grads = torch.autograd.grad(loss, params_list, allow_unused=True)
+
+            # grads = torch.autograd.grad(
+            #     loss,
+            #     list(self.model.initial_encoder.parameters())
+            #     + list(self.model.list_first_rats[i].parameters())
+            #     + list(self.model.encoder_rat_layers.parameters())
+            #     + list(self.model.decoder_rat_layers.parameters()),
+            # )
+
+            # NOTE: shorten grads retrieving step
+            particle_grads = grads[:particle_len]
+            model_wo_particle_grads = grads[particle_len:]
+
+            # initial_encoder_grads = grads[:initial_encoder_len]
+            # particle_grads = grads[
+            #     initial_encoder_len : initial_encoder_len + particle_len
+            # ]
+            # encoder_grads = grads[
+            #     initial_encoder_len
+            #     + particle_len : initial_encoder_len
+            #     + particle_len
+            #     + encoder_len
+            # ]
+            # decoder_grads = grads[initial_encoder_len + particle_len + encoder_len :]
 
             distance_nll[i, :] = torch.nn.utils.parameters_to_vector(particle_grads)
 
@@ -225,35 +230,48 @@ class DEMATrainer(Trainer):
             ):
                 p_tar.grad.data.add_(p_src)  # TODO: divided by #samples if inner is BA
 
-        # Copy initial_encoder grads
-        for p_tar, p_src in zip(
-            self.model.initial_encoder.parameters(), initial_encoder_grads
-        ):
+        # NOTE: shorten SVGD step
+        model_wo_particle_params = [
+            param
+            for name, param in self.model.named_parameters()
+            if "list_first_rats" not in name
+        ]
+        for p_tar, p_src in zip(model_wo_particle_params, model_wo_particle_grads):
             p_tar.grad.data.add_(
                 1 / self.model.num_particles * p_src
                 if p_src is not None
                 else torch.zeros_like(p_tar)
             )
 
-        # Copy encoder grads
-        for p_tar, p_src in zip(
-            self.model.encoder_rat_layers.parameters(), encoder_grads
-        ):
-            p_tar.grad.data.add_(
-                1 / self.model.num_particles * p_src
-                if p_src is not None
-                else torch.zeros_like(p_tar)
-            )
+        # # Copy initial_encoder grads
+        # for p_tar, p_src in zip(
+        #     self.model.initial_encoder.parameters(), initial_encoder_grads
+        # ):
+        #     p_tar.grad.data.add_(
+        #         1 / self.model.num_particles * p_src
+        #         if p_src is not None
+        #         else torch.zeros_like(p_tar)
+        #     )
 
-        # Copy decoder grads
-        for p_tar, p_src in zip(
-            self.model.decoder_rat_layers.parameters(), decoder_grads
-        ):
-            p_tar.grad.data.add_(
-                1 / self.model.num_particles * p_src
-                if p_src is not None
-                else torch.zeros_like(p_tar)
-            )
+        # # Copy encoder grads
+        # for p_tar, p_src in zip(
+        #     self.model.encoder_rat_layers.parameters(), encoder_grads
+        # ):
+        #     p_tar.grad.data.add_(
+        #         1 / self.model.num_particles * p_src
+        #         if p_src is not None
+        #         else torch.zeros_like(p_tar)
+        #     )
+
+        # # Copy decoder grads
+        # for p_tar, p_src in zip(
+        #     self.model.decoder_rat_layers.parameters(), decoder_grads
+        # ):
+        #     p_tar.grad.data.add_(
+        #         1 / self.model.num_particles * p_src
+        #         if p_src is not None
+        #         else torch.zeros_like(p_tar)
+        #     )
 
         # TODO: Free GPU memory
         return sum(final_losses) / self.model.num_particles
@@ -291,7 +309,7 @@ class DEMATrainer(Trainer):
                         batch = next(train_data_loader)
                         losses.append(self.ensemble_train(batch, prior_scale))
 
-                    # TODO: AMP Scaler?
+                    # TODO: inspect AMP Scaler
                     for param_group in optimizer.param_groups:
                         torch.nn.utils.clip_grad_norm_(
                             param_group["params"], self.config["train"]["clip_grad"]
@@ -311,7 +329,9 @@ class DEMATrainer(Trainer):
 
 
 def main(
-    args=None, logdir_suffix: List[str] = None, trainer_class: Type[Trainer] = Trainer
+    args=None,
+    logdir_suffix: List[str] = None,
+    trainer_class: Type[Trainer] = DEMATrainer,
 ):
     parser = argparse.ArgumentParser()
     parser.add_argument("--logdir", required="output/xlmr-multilingual")
