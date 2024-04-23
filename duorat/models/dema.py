@@ -5,36 +5,35 @@ import torch
 from duorat.models.lm_duorat import LMDuoRATModel
 from duorat.models.rat import RATLayer
 from duorat.utils import registry
-from multispider.duorat.types import DuoRATBatch, DuoRATEncoderBatch, RATPreprocItem
+from duorat.types import DuoRATBatch, DuoRATEncoderBatch, RATPreprocItem
 from duorat.models.utils import _flip_attention_mask
 
 logger = logging.getLogger(__name__)
 
 
 @registry.register("model", "InterDEMA")
-class InterDEMA(LMDuoRATModel):
+class InterDEMAModel(LMDuoRATModel):
     """
     A LM DuoRAT model with first layer is clone multiple times
     """
 
-    def __init__(self, preprocess, encoder, decoder, num_particles=5):
+    def __init__(self, preproc, encoder, decoder):
         # ascertain the number of encoder layers remain unchanged
-        encoder["rat_num_layers"] = encoder["rat_num_layer"] - 1
+        encoder["rat_num_layers"] = encoder["rat_num_layers"] - 1
 
-        super().__init__(preproc=preprocess, encoder=encoder, decoder=decoder)
+        super().__init__(preproc=preproc, encoder=encoder, decoder=decoder)
 
-        self.num_particles = num_particles
+        self.num_particles = encoder.get("num_particles", 5)
 
         self.list_first_rats = torch.nn.ModuleList()
-        for _ in range(num_particles):
+        for _ in range(self.num_particles):
             particle_encoder = RATLayer(
-                embed_dim=self.decoder_rat_embed_dim,
-                mem_embed_dim=self.mem_embed_dim,
-                num_heads=decoder["rat_num_heads"],
-                ffn_dim=decoder["rat_ffn_dim"],
-                dropout=decoder["rat_dropout"],
-                attention_dropout=decoder["rat_attention_dropout"],
-                relu_dropout=decoder["rat_relu_dropout"],
+                embed_dim=self.encoder_rat_embed_dim,
+                num_heads=encoder["rat_num_heads"],
+                ffn_dim=encoder["rat_ffn_dim"],
+                dropout=encoder["rat_dropout"],
+                attention_dropout=encoder["rat_attention_dropout"],
+                relu_dropout=encoder["rat_relu_dropout"],
             )
 
             self.list_first_rats.append(particle_encoder)
