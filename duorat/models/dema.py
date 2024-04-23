@@ -5,6 +5,7 @@ import torch
 from duorat.models.lm_duorat import LMDuoRATModel
 from duorat.models.rat import RATLayer
 from duorat.utils import registry
+from multispider.duorat.types import DuoRATBatch, DuoRATEncoderBatch, RATPreprocItem
 
 logger = logging.getLogger(__name__)
 
@@ -36,3 +37,107 @@ class InterDEMA(LMDuoRATModel):
             )
 
             self.list_first_rats.append(particle_encoder)
+
+    def compute_branch_loss(self, preproc_items: torch.List[RATPreprocItem], particle_idx: int, debug=False) -> torch.Tensor:
+        duo_rat_batch = self.items_to_duo_rat_batch(preproc_items)
+        decoder_batch = duo_rat_batch.decoder_batch
+        
+        memory, output = self.forward_branch(batch=duo_rat_batch, particle_idx=particle_idx)
+        
+        assert not torch.isnan(memory).any()
+        assert not torch.isnan(output).any()
+        
+        loss = self._compute_loss(
+            memory=memory,
+            output=output,
+            target_key_padding_mask=decoder_batch.target_key_padding_mask,
+            valid_copy_mask=decoder_batch.valid_copy_mask,
+            copy_target_mask=decoder_batch.copy_target_mask,
+            valid_actions_mask=decoder_batch.valid_actions_mask,
+            target=decoder_batch.target,
+        ).mean()
+        
+        return loss
+    
+    def forward_branch(self, batch: DuoRATBatch, particle_idx: int) -> torch.Tuple[torch.Tensor]:
+        source = self._encode_branch(self, batch.encoder_batch, particle_idx)
+        target = self._decode(memory=source, batch=batch.decoder_batch)
+        
+        return source, target
+        
+    def _encode_branch(self, batch: DuoRATEncoderBatch, particle_idx: int) ->  torch.Tensor:
+        (batch_size, _max_input_length) = batch.input_a.shape
+        
+        source = self.initial_encoder(
+            input_a=batch.input_a,
+            input_b=batch.input_b,
+            input_attention_mask=batch.input_attention_mask,
+            input_key_padding_mask=batch.input_key_padding_mask,
+            input_token_type_ids=batch.input_token_type_ids,
+            input_position_ids=batch.input_position_ids,
+            input_source_gather_index=batch.input_source_gather_index,
+            input_segments=batch.input_segments,
+        )
+        
+        (_batch_size, max_src_length, _encoder_rat_embed_dim) = source.shape
+        
+        assert _batch_size == batch_size
+        assert _encoder_rat_embed_dim == self.encoder_rat_embed_dim
+        
+        source = self._encode_source_branch(
+            source=source,
+            source_relations=batch.source_relations,
+            source_attention_mask=batch.source_attention_mask,
+            source_key_padding_mask=batch.source_key_padding_mask,
+            particle_idx=particle_idx
+        )
+        assert source.shape == (batch_size, max_src_length, self.encoder_rat_embed_dim)
+        return source
+    
+    def _encode_source_branch(
+        self,
+        source: torch.Tensor,
+        source_relations: torch.Tensor,
+        source_attention_mask: torch.Tensor,
+        source_key_padding_mask: torch.Tensor,
+        particle_idx: int
+    ) -> torch.Tensor:
+        device = next(self.parameters()).device
+        source_relations = source_relations.to(device)
+        (batch_size, max_src_length, _encoder_rat_embed_dim) = source.shape
+
+        _source_relations = self.source_relation_embed(source_relations)
+        assert _source_relations.shape == (
+            batch_size,
+            max_src_length,
+            max_src_length,
+            self.encoder_rat_head_dim,
+        )
+
+        _source_attention_mask = self._flip_attention_mask(source_attention_mask).to(
+            device=device
+        )
+        _source_key_padding_mask = ~source_key_padding_mask.to(device=device)
+
+        source = self.list_first_rats[particle_idx](
+            x=source,
+            relations_k=_source_relations,
+            relations_v=_source_relations
+            if self.relation_aware_values
+            else torch.zeros_like(_source_relations),
+            attention_mask=_source_attention_mask,
+            key_padding_mask=_source_key_padding_mask,
+        )
+        
+        for layer in self.encoder_rat_layers:
+            source = layer(
+                x=source,
+                relations_k=_source_relations,
+                relations_v=_source_relations
+                if self.relation_aware_values
+                else torch.zeros_like(_source_relations),
+                attention_mask=_source_attention_mask,
+                key_padding_mask=_source_key_padding_mask,
+            )
+        assert source.shape == (batch_size, max_src_length, self.encoder_rat_embed_dim)
+        return source
