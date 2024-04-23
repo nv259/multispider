@@ -6,6 +6,7 @@ from duorat.models.lm_duorat import LMDuoRATModel
 from duorat.models.rat import RATLayer
 from duorat.utils import registry
 from multispider.duorat.types import DuoRATBatch, DuoRATEncoderBatch, RATPreprocItem
+from duorat.models.utils import _flip_attention_mask
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class InterDEMA(LMDuoRATModel):
             self.encoder_rat_head_dim,
         )
 
-        _source_attention_mask = self._flip_attention_mask(source_attention_mask).to(
+        _source_attention_mask = _flip_attention_mask(source_attention_mask).to(
             device=device
         )
         _source_key_padding_mask = ~source_key_padding_mask.to(device=device)
@@ -129,6 +130,54 @@ class InterDEMA(LMDuoRATModel):
             key_padding_mask=_source_key_padding_mask,
         )
         
+        for layer in self.encoder_rat_layers:
+            source = layer(
+                x=source,
+                relations_k=_source_relations,
+                relations_v=_source_relations
+                if self.relation_aware_values
+                else torch.zeros_like(_source_relations),
+                attention_mask=_source_attention_mask,
+                key_padding_mask=_source_key_padding_mask,
+            )
+        assert source.shape == (batch_size, max_src_length, self.encoder_rat_embed_dim)
+        return source
+    
+    def _encode_source(self, source: torch.Tensor, source_relations: torch.Tensor, source_attention_mask: torch.Tensor, source_key_padding_mask: torch.Tensor) -> torch.Tensor:
+        device = next(self.parameters()).device
+        source_relations = source_relations.to(device)
+        (batch_size, max_src_length, _encoder_rat_embed_dim) = source.shape
+
+        _source_relations = self.source_relation_embed(source_relations)
+        assert _source_relations.shape == (
+            batch_size,
+            max_src_length,
+            max_src_length,
+            self.encoder_rat_head_dim,
+        )
+
+        _source_attention_mask = _flip_attention_mask(source_attention_mask).to(
+            device=device
+        )
+        _source_key_padding_mask = ~source_key_padding_mask.to(device=device)
+
+        source_particle_list = []
+        
+        for i in range(self.num_particles): 
+            source = self.list_first_rats[i](
+                x=source,
+                relations_k=_source_relations,
+                relations_v=_source_relations
+                if self.relation_aware_values
+                else torch.zeros_like(_source_relations),
+                attention_mask=_source_attention_mask,
+                key_padding_mask=_source_key_padding_mask,
+            )
+            
+            source_particle_list.append(source)
+            
+        source = torch.stack(source_particle_list, dim=0).mean(dim=0)
+
         for layer in self.encoder_rat_layers:
             source = layer(
                 x=source,
