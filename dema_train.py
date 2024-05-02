@@ -171,7 +171,7 @@ class DEMATrainer(Trainer):
         decoder_grads = None
 
         for i in range(self.model.num_particles):
-            loss = self.model.compute_branch_loss(batch)
+            loss = self.model.compute_branch_loss(batch, particle_idx=i)
             final_losses.append(loss.item())
             loss /= self.config["train"]["n_grad_accumulation_steps"]
 
