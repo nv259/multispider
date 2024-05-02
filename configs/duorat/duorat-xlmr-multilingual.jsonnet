@@ -1,4 +1,4 @@
-local bert_path = 'xlm-roberta-large';
+local bert_path = 'xlm-roberta-base';
 
 (import 'duorat-base.libsonnet')(output_from=true) {
     local PREFIX = 'dataset/spider/',
@@ -20,10 +20,10 @@ local bert_path = 'xlm-roberta-large';
         val_vi: (import '../data/val_vi.libsonnet')(prefix=PREFIX),
     },
     lr_scheduler: {
-        "decay_steps": 90,
+        "decay_steps": 98000,
         "end_lr": 0,
         "name": "bert_warmup_polynomial",
-        "num_warmup_steps": 20,
+        "num_warmup_steps": 2000,
         "power": 1,
         "start_lr": 0.0001,
         "bert_factor": 8
@@ -115,17 +115,17 @@ local bert_path = 'xlm-roberta-large';
     "train": {
         "amp_enabled": true,
         "toy_mode": false,
-        "batch_size": 2,
-        "n_grad_accumulation_steps": 2,
-        "eval_batch_size": 16,
+        "batch_size": 9,
+        "n_grad_accumulation_steps": 3,
+        "eval_batch_size": 256,
         "eval_beam_size": 1,
         "eval_decode_max_time_step": 500,
-        "eval_every_n": 500,
+        "eval_every_n": 5000,
         "eval_nproc": 1,
         "eval_on_train": false,
         "eval_on_val": true,
         "infer_min_n": 5000,
-        "max_steps": 1000,
+        "max_steps": 100000,
         "num_eval_items": 1034,
         "report_every_n": 10,
         "data_splits":  ['train_en', 'train_zh', 'train_de', 'train_fr', 'train_es', 'train_ja', 'train_vi']
