@@ -116,8 +116,8 @@ local bert_path = 'xlm-roberta-base';
     "train": {
         "amp_enabled": true,
         "toy_mode": false,
-        "batch_size": 16,
-        "n_grad_accumulation_steps": 3,
+        "batch_size": 24,
+        "n_grad_accumulation_steps": 2,
         "eval_batch_size": 256,
         "eval_beam_size": 1,
         "eval_decode_max_time_step": 500,
