@@ -143,7 +143,7 @@ class DEMATrainer(Trainer):
 
         inner_inter_params = []
         for i in range(self.num_particles):
-            inner_inter_params.append(list(self.model.list_first_rat[i].parameters()))
+            inner_inter_params.append(list(self.model.list_first_rats[i].parameters()))
 
         params_matrix = torch.stack(
             [
