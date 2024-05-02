@@ -297,35 +297,94 @@ class DEMATrainer(Trainer):
                 # Quit if too long
                 if last_step >= self.config["train"]["max_steps"]:
                     break
+                
+                oom = False
 
-                # Compute and apply gradient
-                with self.model_random:
-                    # Assert all params have grad
-                    for p in self.model.parameters():
-                        p.grad = torch.zeros_like(p) if p.grad is None else p.grad
+                try:
+                    # Compute and apply gradient
+                    with self.model_random:
+                        # Assert all params have grad
+                        for p in self.model.parameters():
+                            p.grad = torch.zeros_like(p) if p.grad is None else p.grad
 
-                    # Accumulate and update gradient
-                    for _ in range(self.config["train"]["n_grad_accumulation_steps"]):
-                        batch = next(train_data_loader)
-                        losses.append(self.ensemble_train(batch, prior_scale))
+                        # Accumulate and update gradient
+                        for _ in range(self.config["train"]["n_grad_accumulation_steps"]):
+                            batch = next(train_data_loader)
+                            losses.append(self.ensemble_train(batch, prior_scale))
 
-                    # TODO: inspect AMP Scaler
-                    for param_group in optimizer.param_groups:
-                        torch.nn.utils.clip_grad_norm_(
-                            param_group["params"], self.config["train"]["clip_grad"]
-                        )
+                        # TODO: inspect AMP Scaler
+                        for param_group in optimizer.param_groups:
+                            torch.nn.utils.clip_grad_norm_(
+                                param_group["params"], self.config["train"]["clip_grad"]
+                            )
 
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    lr_scheduler.update_lr(last_step)
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        lr_scheduler.update_lr(last_step)
 
-                last_step += 1
+                    last_step += 1
 
-                self._report(last_step=last_step, losses=losses, optimizer=optimizer)
-                self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir)
+                    self._report(last_step=last_step, losses=losses, optimizer=optimizer)
+                    self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir)
 
-                # Reset the list of losses
-                losses = []
+                    # Reset the list of losses
+                    losses = []
+                
+                except RuntimeError as e:
+                    err_msg = str(e)
+                    self.logger.warn(f"Forward Failed: {err_msg}")
+                    oom = True
+                    
+                if oom: 
+                    # Save the checkpoint and load to CPU
+                    tmp_step = int(1e8)
+                    saver.save(modeldir, step=tmp_step)
+                    self.model.to('cpu')
+                    del self.model
+                    _optimizer_to(optimizer, 'cpu')
+                    del optimizer, lr_scheduler
+                    torch.cuda.empty_cache()
+                    import gc; gc.collect()
+                    
+                    # Load again
+                    self.__init__(self.logger, self.config)
+                    optimizer, lr_scheduler, trainer = self._load_optimizer(self.config)
+                
+                    # 1.5. Initialize Automatic Mixed Precision (AMP) training
+                    # scaler = GradScaler(enabled=self.config["train"]["amp_enabled"])
+
+                    # 2. Restore model parameters
+                    saver = saver_mod.Saver(
+                        self.model, optimizer
+                    )
+
+                    if torch.cuda.is_available():
+                        device = torch.device("cuda")
+                    else:
+                        device = torch.device("cpu")
+
+                    last_step, best_val_all_exact = saver.restore(modeldir, step=last_step, map_location=device)
+                    self.logger.log(f"Model restored, the last step is {last_step}, best val_all_exact is {best_val_all_exact}")
+                    
+                    # Remove the tmp_checkpoint
+                    os.unlink(os.path.join(modeldir, f"model_checkpoint-{tmp_step}"))
+                    
+
+def _optimizer_to(optimizer, device):
+    "Move optimizer state to cpu"
+    for param in optimizer.state.values():
+        # Not sure there are any global tensors in the state dict
+        if isinstance(param, torch.Tensor):
+            param.data = param.data.to(device)
+            if param._grad is not None:
+                param._grad.data = param._grad.data.to(device)
+        
+        elif isinstance(param, dict):
+            for subparam in param.values():
+                if isinstance(subparam, torch.Tensor):
+                    subparam.data = subparam.data.to(device)
+                    if subparam._grad is not None:
+                        subparam._grad.data = subparam._grad.data.to(device)
 
 
 def main(
