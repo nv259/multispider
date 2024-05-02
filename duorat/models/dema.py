@@ -60,7 +60,7 @@ class InterDEMAModel(LMDuoRATModel):
         return loss
     
     def forward_branch(self, batch: DuoRATBatch, particle_idx: int) -> torch.Tuple[torch.Tensor]:
-        source = self._encode_branch(self, batch.encoder_batch, particle_idx)
+        source = self._encode_branch(batch.encoder_batch, particle_idx)
         target = self._decode(memory=source, batch=batch.decoder_batch)
         
         return source, target
