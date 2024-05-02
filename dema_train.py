@@ -35,6 +35,10 @@ from train import Logger, Trainer
 
 
 class DEMATrainer(Trainer):
+    def __init__(self, logger, config):
+        super().__init__(logger, config)
+        self.num_particles = self.config['model']['encoder']['num_particles']
+         
     def get_kernel(self, params: torch.Tensor, num_particles):
         """
         Compute the RBF kernel for the input
@@ -368,7 +372,7 @@ class DEMATrainer(Trainer):
                     
                     # Remove the tmp_checkpoint
                     os.unlink(os.path.join(modeldir, f"model_checkpoint-{tmp_step}"))
-                    
+
 
 def _optimizer_to(optimizer, device):
     "Move optimizer state to cpu"
