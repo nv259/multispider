@@ -342,7 +342,12 @@ class DEMATrainer(Trainer):
                 if oom: 
                     # Save the checkpoint and load to CPU
                     tmp_step = int(1e8)
-                    saver.save(modeldir, step=tmp_step)
+                    saver.save(
+                        modeldir,
+                        last_step,
+                        is_best=False,
+                        best_validation_metric=best_val_all_exact
+                    )
                     self.model.to('cpu')
                     del self.model
                     _optimizer_to(optimizer, 'cpu')
