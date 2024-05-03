@@ -123,7 +123,7 @@ class Trainer:
     def _log_lr(self, last_step, lrs: List[dict]):
         for lr in lrs:
             self.logger.log(
-                "Step {}: lr[{}]={:.4f}".format(last_step, lr["name"], lr["value"])
+                "Step {}: lr[{}]={:.5f}".format(last_step, lr["name"], lr["value"])
             )
 
     def _log_stats(self, last_step, eval_section, stats):
@@ -211,6 +211,7 @@ class Trainer:
             )
             best_val_all_exact = max(val_all_exact, best_val_all_exact)
 
+    # TODO: implement precautionary measure for out-of-memory
     def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step):
         # Counter for grad aggregation
         grad_accumulation_counter = 0
