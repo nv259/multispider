@@ -210,6 +210,8 @@ class Trainer:
                 best_validation_metric=max(val_all_exact, best_val_all_exact)
             )
             best_val_all_exact = max(val_all_exact, best_val_all_exact)
+        
+            return best_val_all_exact
 
     # TODO: implement precautionary measure for out-of-memory
     def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step, best_val_all_exact):
@@ -263,7 +265,7 @@ class Trainer:
                         last_step += 1
 
                         self._report(last_step=last_step, losses=losses, optimizer=optimizer)
-                        self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
+                        best_val_all_exact = self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
                 
                         # Reset the list of losses
                         losses = []
