@@ -289,6 +289,7 @@ class DEMATrainer(Trainer):
         saver,
         modeldir,
         last_step,
+        best_val_all_exact,
         prior_scale=1e-3,
     ):
         # Counter for grad aggregation
@@ -296,7 +297,7 @@ class DEMATrainer(Trainer):
         losses = []
 
         # with open("model.txt", "w") as f:
-        print(self.model) 
+        # print(self.model) 
         
         # 4. Start training loop
         with self.data_random:
