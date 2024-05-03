@@ -22,6 +22,7 @@ class WarmupPolynomialLRScheduler:
     def update_lr(self, current_step):
         if current_step < self.num_warmup_steps:
             warmup_frac_done = current_step / self.num_warmup_steps
+            print(f"warmup_frac_done: {warmup_frac_done}")
             new_lr = self.start_lr * warmup_frac_done
         elif current_step < (self.num_warmup_steps + self.decay_steps):
             new_lr = (self.start_lr - self.end_lr) * (
