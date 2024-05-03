@@ -123,7 +123,7 @@ class Trainer:
     def _log_lr(self, last_step, lrs: List[dict]):
         for lr in lrs:
             self.logger.log(
-                "Step {}: lr[{}]={:.5f}".format(last_step, lr["name"], lr["value"])
+                "Step {}: lr[{}]={}".format(last_step, lr["name"], lr["value"])
             )
 
     def _log_stats(self, last_step, eval_section, stats):
