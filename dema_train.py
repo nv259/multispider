@@ -295,6 +295,9 @@ class DEMATrainer(Trainer):
         grad_accumulation_counter = 0
         losses = []
 
+        # with open("model.txt", "w") as f:
+        print(self.model) 
+        
         # 4. Start training loop
         with self.data_random:
             while True:

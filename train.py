@@ -192,7 +192,7 @@ class Trainer:
             self._log_loss(last_step, cur_loss)
             self._log_lr(last_step, cur_lrs)
                     
-    def _evaluate(self, last_step, saver, modeldir):
+    def _evaluate(self, last_step, saver, modeldir, best_val_all_exact):
         # Evaluate model
         if last_step % self.config["train"]["eval_every_n"] == 0 \
                 and last_step != 0:
@@ -212,7 +212,7 @@ class Trainer:
             best_val_all_exact = max(val_all_exact, best_val_all_exact)
 
     # TODO: implement precautionary measure for out-of-memory
-    def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step):
+    def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step, best_val_all_exact):
         # Counter for grad aggregation
         grad_accumulation_counter = 0
         losses = []
@@ -263,7 +263,7 @@ class Trainer:
                         last_step += 1
 
                         self._report(last_step=last_step, losses=losses, optimizer=optimizer)
-                        self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir)
+                        self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
                 
                         # Reset the list of losses
                         losses = []
@@ -375,7 +375,8 @@ class Trainer:
             scaler=scaler,
             saver=saver,
             modeldir=modeldir,
-            last_step=last_step
+            last_step=last_step,
+            best_val_all_exact=best_val_all_exact
         )
              
     @staticmethod
