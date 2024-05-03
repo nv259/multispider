@@ -336,7 +336,7 @@ class DEMATrainer(Trainer):
                 
                 except RuntimeError as e:
                     err_msg = str(e)
-                    self.logger.warn(f"Forward Failed: {err_msg}")
+                    self.logger.log(f"Forward Failed: {err_msg}")
                     oom = True
                     
                 if oom: 
