@@ -345,7 +345,7 @@ class DEMATrainer(Trainer):
                     
                 if oom: 
                     # Save the checkpoint and load to CPU
-                    tmp_step = int(1e8)
+                    # tmp_step = int(1e8)
                     saver.save(
                         modeldir,
                         last_step,
@@ -363,13 +363,10 @@ class DEMATrainer(Trainer):
                     self.__init__(self.logger, self.config)
                     optimizer, lr_scheduler, trainer = self._load_optimizer(self.config)
                 
-                    # 1.5. Initialize Automatic Mixed Precision (AMP) training
-                    # scaler = GradScaler(enabled=self.config["train"]["amp_enabled"])
-
                     # 2. Restore model parameters
-                    saver = saver_mod.Saver(
-                        self.model, optimizer
-                    )
+                    # saver = saver_mod.Saver(
+                    #     self.model, optimizer
+                    # )
 
                     if torch.cuda.is_available():
                         device = torch.device("cuda")
@@ -380,7 +377,7 @@ class DEMATrainer(Trainer):
                     self.logger.log(f"Model restored, the last step is {last_step}, best val_all_exact is {best_val_all_exact}")
                     
                     # Remove the tmp_checkpoint
-                    os.unlink(os.path.join(modeldir, f"model_checkpoint-{tmp_step}"))
+                    os.unlink(os.path.join(modeldir, f"model_step-{last_step}"))
 
 
 def _optimizer_to(optimizer, device):
