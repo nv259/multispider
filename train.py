@@ -192,16 +192,17 @@ class Trainer:
             self._log_loss(last_step, cur_loss)
             self._log_lr(last_step, cur_lrs)
                     
-    def _evaluate(self, last_step, saver, modeldir, best_val_all_exact):
+    def _evaluate(self, train_eval_data_loader, val_data_loader, last_step, saver, modeldir, best_val_all_exact):
         # Evaluate model
         if last_step % self.config["train"]["eval_every_n"] == 0 \
                 and last_step != 0:
-            # try:
-            #     val_all_exact, train_all_exact = _evaluate_model()
-            #     print('val_all_exact: ', val_all_exact)
-            # except:
-            val_all_exact, train_all_exact = 0, 0
-            # print('infer error')
+            try:
+                val_all_exact, train_all_exact = self._evaluate_model(train_eval_data_loader, val_data_loader, modeldir, last_step)
+                print('val_all_exact: ', val_all_exact)
+            except:    
+                print("error when evaluate model, set val_all_exact to 0")
+                val_all_exact, train_all_exact = 0, 0
+                # print('infer error')
             # Run saver
             saver.save(
                 modeldir,
@@ -214,7 +215,7 @@ class Trainer:
             return best_val_all_exact
 
     # TODO: implement precautionary measure for out-of-memory
-    def _update(self, train_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step, best_val_all_exact):
+    def _update(self, train_data_loader, train_eval_data_loader, val_data_loader, optimizer, lr_scheduler, scaler, saver, modeldir, last_step, best_val_all_exact):
         # Counter for grad aggregation
         grad_accumulation_counter = 0
         losses = []
@@ -265,11 +266,24 @@ class Trainer:
                         last_step += 1
 
                         self._report(last_step=last_step, losses=losses, optimizer=optimizer)
-                        best_val_all_exact = self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
+                        best_val_all_exact = self._evaluate(train_eval_data_loader=train_eval_data_loader, val_data_loader=val_data_loader, last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
                 
                         # Reset the list of losses
                         losses = []
                      
+    def _evaluate_model(self, train_eval_data_loader, val_data_loader, modeldir, last_step):
+        # A model that is not evaluated (if eval_on_val=False, or if step < infer_min_n)
+        # is given a performance of 0
+        val_all_exact = 0
+        train_all_exact = 0
+        if self.config["train"]["eval_on_train"]:
+            self.logger.log("Evaluate on the training set")
+            train_all_exact = self._eval_model(modeldir, last_step, train_eval_data_loader, "train")
+        if self.config["train"]["eval_on_val"]:
+            self.logger.log("Evaluate on the validation set")
+            val_all_exact = self._eval_model(modeldir, last_step, val_data_loader, "val")
+        return val_all_exact, train_all_exact
+    
     def train(self, modeldir, load_path=None, step=None):
         # Save the config info
         with open(
@@ -357,21 +371,11 @@ class Trainer:
             num_workers=8 if torch.cuda.is_available() else 0,
         )
 
-        def _evaluate_model():
-            # A model that is not evaluated (if eval_on_val=False, or if step < infer_min_n)
-            # is given a performance of 0
-            val_all_exact = 0
-            train_all_exact = 0
-            if self.config["train"]["eval_on_train"]:
-                self.logger.log("Evaluate on the training set")
-                train_all_exact = self._eval_model(modeldir, last_step, train_eval_data_loader, "train")
-            if self.config["train"]["eval_on_val"]:
-                self.logger.log("Evaluate on the validation set")
-                val_all_exact = self._eval_model(modeldir, last_step, val_data_loader, "val")
-            return val_all_exact, train_all_exact
 
         self._update(
             train_data_loader=train_data_loader,
+            train_eval_data_loader=train_eval_data_loader,
+            val_data_loader=val_data_loader,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             scaler=scaler,

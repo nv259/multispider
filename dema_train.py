@@ -283,6 +283,8 @@ class DEMATrainer(Trainer):
     def _update(
         self,
         train_data_loader,
+        train_eval_data_loader, 
+        val_data_loader,
         optimizer,
         lr_scheduler,
         scaler,
@@ -333,7 +335,12 @@ class DEMATrainer(Trainer):
                     last_step += 1
 
                     self._report(last_step=last_step, losses=losses, optimizer=optimizer)
-                    best_val_all_exact = self._evaluate(last_step=last_step, saver=saver, modeldir=modeldir, best_val_all_exact=best_val_all_exact)
+                    best_val_all_exact = self._evaluate(train_eval_data_loader=train_eval_data_loader,
+                                                        val_data_loader=val_data_loader,
+                                                        last_step=last_step, 
+                                                        saver=saver, 
+                                                        modeldir=modeldir, 
+                                                        best_val_all_exact=best_val_all_exact)
 
                     # Reset the list of losses
                     losses = []
