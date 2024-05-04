@@ -345,10 +345,10 @@ class DEMATrainer(Trainer):
                     
                 if oom: 
                     # Save the checkpoint and load to CPU
-                    tmp_step = int(1e8)
+                    # tmp_step = int(1e8)
                     saver.save(
                         modeldir,
-                        tmp_step,
+                        last_step,
                         is_best=False,
                         best_validation_metric=best_val_all_exact
                     )
@@ -373,11 +373,11 @@ class DEMATrainer(Trainer):
                     else:
                         device = torch.device("cpu")
 
-                    last_step, best_val_all_exact = saver.restore(modeldir, step=tmp_step, map_location=device)
+                    last_step, best_val_all_exact = saver.restore(modeldir, step=last_step, map_location=device)
                     self.logger.log(f"Model restored, the last step is {last_step}, best val_all_exact is {best_val_all_exact}")
                     
                     # Remove the tmp_checkpoint
-                    os.unlink(os.path.join(modeldir, f"model_step_{tmp_step}"))
+                    os.unlink(os.path.join(modeldir, f"model_step_{last_step}"))
 
 
 def _optimizer_to(optimizer, device):
