@@ -122,20 +122,20 @@ def save_checkpoint(model, optimizer, step, model_dir, is_best, best_validation_
             "step": step,
             "best_validation_metric": best_validation_metric,
         },
-        step_checkpoint_path
-        # best_checkpoint_path if is_best else last_checkpoint_path,
+        best_checkpoint_path if is_best else last_checkpoint_path,
+        # step_checkpoint_path 
     )
-    # if is_best:
-    #     if os.path.exists(last_checkpoint_path):
-    #         os.unlink(last_checkpoint_path)
-    #     if os.path.exists(best_checkpoint_path):
-    #         os.unlink(best_checkpoint_path)
-    #     try:
-    #         os.symlink(os.path.basename(step_checkpoint_path), last_checkpoint_path)
-    #         os.symlink(os.path.basename(step_checkpoint_path), best_checkpoint_path)
-    #     except OSError as e:
-    #         print(e)
-    #         shutil.copy2(best_checkpoint_path, last_checkpoint_path)
+    if is_best:
+        if os.path.exists(last_checkpoint_path):
+            os.unlink(last_checkpoint_path)
+        if os.path.exists(best_checkpoint_path):
+            os.unlink(best_checkpoint_path)
+        try:
+            os.symlink(os.path.basename(step_checkpoint_path), last_checkpoint_path)
+            os.symlink(os.path.basename(step_checkpoint_path), best_checkpoint_path)
+        except OSError as e:
+            print(e)
+            shutil.copy2(best_checkpoint_path, last_checkpoint_path)
 
 
 def atomic_torch_save(object_, path):
@@ -150,7 +150,7 @@ class Saver(object):
     def __init__(self, model, optimizer):
         self._model = model
         self._optimizer = optimizer
-
+        
     def restore(self, model_dir, map_location=None, step=None, load_best=False):
         """Restores model and optimizer from given directory.
         If load_best, loads the best model. Otherwise, loads the last model.

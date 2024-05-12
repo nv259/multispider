@@ -153,11 +153,7 @@ class DEMATrainer(Trainer):
             dim=0,
         )
 
-        initial_encoder_len = len(list(self.model.initial_encoder.parameters()))
         particle_len = len(list(self.model.list_first_rats[0].parameters()))
-        encoder_len = len(list(self.model.encoder_rat_layers.parameters()))
-
-        ret_dict = {}
 
         # For computing distance
         distance_nll = torch.empty(
@@ -166,9 +162,6 @@ class DEMATrainer(Trainer):
         )
 
         final_losses = []
-        initial_encoder_grads = None
-        encoder_grads = None
-        decoder_grads = None
 
         for i in range(self.model.num_particles):
             loss = self.model.compute_branch_loss(batch, particle_idx=i)
@@ -181,33 +174,10 @@ class DEMATrainer(Trainer):
                 if "list_first_rats" not in name
             )
 
-            # NOTE: shorten grads calculation
-            # WARNING: ascertain whether torch.autograd.grad return w.r.t inputs' order
             grads = torch.autograd.grad(loss, params_list, allow_unused=True)
 
-            # grads = torch.autograd.grad(
-            #     loss,
-            #     list(self.model.initial_encoder.parameters())
-            #     + list(self.model.list_first_rats[i].parameters())
-            #     + list(self.model.encoder_rat_layers.parameters())
-            #     + list(self.model.decoder_rat_layers.parameters()),
-            # )
-
-            # NOTE: shorten grads retrieving step
             particle_grads = grads[:particle_len]
             model_wo_particle_grads = grads[particle_len:]
-
-            # initial_encoder_grads = grads[:initial_encoder_len]
-            # particle_grads = grads[
-            #     initial_encoder_len : initial_encoder_len + particle_len
-            # ]
-            # encoder_grads = grads[
-            #     initial_encoder_len
-            #     + particle_len : initial_encoder_len
-            #     + particle_len
-            #     + encoder_len
-            # ]
-            # decoder_grads = grads[initial_encoder_len + particle_len + encoder_len :]
 
             distance_nll[i, :] = torch.nn.utils.parameters_to_vector(particle_grads)
 
@@ -247,36 +217,6 @@ class DEMATrainer(Trainer):
                 else torch.zeros_like(p_tar)
             )
 
-        # # Copy initial_encoder grads
-        # for p_tar, p_src in zip(
-        #     self.model.initial_encoder.parameters(), initial_encoder_grads
-        # ):
-        #     p_tar.grad.data.add_(
-        #         1 / self.model.num_particles * p_src
-        #         if p_src is not None
-        #         else torch.zeros_like(p_tar)
-        #     )
-
-        # # Copy encoder grads
-        # for p_tar, p_src in zip(
-        #     self.model.encoder_rat_layers.parameters(), encoder_grads
-        # ):
-        #     p_tar.grad.data.add_(
-        #         1 / self.model.num_particles * p_src
-        #         if p_src is not None
-        #         else torch.zeros_like(p_tar)
-        #     )
-
-        # # Copy decoder grads
-        # for p_tar, p_src in zip(
-        #     self.model.decoder_rat_layers.parameters(), decoder_grads
-        # ):
-        #     p_tar.grad.data.add_(
-        #         1 / self.model.num_particles * p_src
-        #         if p_src is not None
-        #         else torch.zeros_like(p_tar)
-        #     )
-
         # TODO: Free GPU memory
         return sum(final_losses) / self.model.num_particles
 
@@ -294,12 +234,7 @@ class DEMATrainer(Trainer):
         best_val_all_exact,
         prior_scale=1e-3,
     ):
-        # Counter for grad aggregation
-        grad_accumulation_counter = 0
         losses = []
-
-        # with open("model.txt", "w") as f:
-        # print(self.model) 
         
         # 4. Start training loop
         with self.data_random:
@@ -349,10 +284,11 @@ class DEMATrainer(Trainer):
                     err_msg = str(e)
                     self.logger.log(f"Forward Failed: {err_msg}")
                     oom = True
-                    
+
+                # TODO: too many refcount to model, hence, gc.collect() cannot perform in the desired way
+                # TODO: inspect refcount id(self.model))
                 if oom: 
                     # Save the checkpoint and load to CPU
-                    # tmp_step = int(1e8)
                     saver.save(
                         modeldir,
                         last_step,
@@ -367,24 +303,24 @@ class DEMATrainer(Trainer):
                     import gc; gc.collect()
                     
                     # Load again
-                    self.__init__(self.logger, self.config)
-                    optimizer, lr_scheduler, trainer = self._load_optimizer(self.config)
-                
-                    # 2. Restore model parameters
-                    # saver = saver_mod.Saver(
-                    #     self.model, optimizer
-                    # )
-
-                    if torch.cuda.is_available():
-                        device = torch.device("cuda")
-                    else:
-                        device = torch.device("cpu")
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    # self.__init__(self.logger, self.config)
+                    self.model = registry.construct(
+                        "model", self.config["model"], preproc=self.model_preproc,
+                    )
+                    self.model.to(device=device)
+                    optimizer, lr_scheduler, _ = self._load_optimizer(self.config)
 
                     last_step, best_val_all_exact = saver.restore(modeldir, step=last_step, map_location=device)
                     self.logger.log(f"Model restored, the last step is {last_step}, best val_all_exact is {best_val_all_exact}")
-                    
+                   
+                    # Rename to last_step 
+                    os.rename(
+                        os.path.join(modeldir, f"model_step_{last_step}"),
+                        os.path.join(modeldir, f"model_last_step")
+                    )  
                     # Remove the tmp_checkpoint
-                    os.unlink(os.path.join(modeldir, f"model_step_{last_step}"))
+                    # os.unlink(os.path.join(modeldir, f"model_step_{last_step}"))
 
 
 def _optimizer_to(optimizer, device):
@@ -412,9 +348,9 @@ def main(
     parser = argparse.ArgumentParser()
     parser.add_argument("--logdir", required="output/xlmr-multilingual")
     parser.add_argument(
-        "--config", default="configs/duorat/duorat-xlmr-multilingual.jsonnet"
+        "--config", default="configs/duorat/dema-xlmr-multilingual.jsonnet"
     )
-    parser.add_argument("--preproc_data_path", default="dataset/pkl/xlmr-multilingual")
+    parser.add_argument("--preproc_data_path", default="dataset/pkl/dema-multilingual")
     parser.add_argument("--load_path", default="")
     parser.add_argument("--step", default="")
     args = parser.parse_args(args)

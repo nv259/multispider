@@ -315,6 +315,8 @@ class Trainer:
 
         if load_path:
             last_step, best_val_all_exact = saver.restore(load_path, step=step, map_location=device)
+        elif step == -1:
+            last_step, best_val_all_exact = saver.restore(modeldir)
         else:
             last_step, best_val_all_exact = saver.restore(modeldir, step=step, map_location=device)
 
