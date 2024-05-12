@@ -203,6 +203,10 @@ class Trainer:
                 print("error when evaluate model, set val_all_exact to 0")
                 val_all_exact, train_all_exact = 0, 0
                 # print('infer error')
+                
+            if best_val_all_exact is None:
+                best_val_all_exact = 0
+                
             # Run saver
             saver.save(
                 modeldir,
@@ -315,8 +319,6 @@ class Trainer:
 
         if load_path:
             last_step, best_val_all_exact = saver.restore(load_path, step=step, map_location=device)
-        elif step == -1:
-            last_step, best_val_all_exact = saver.restore(modeldir)
         else:
             last_step, best_val_all_exact = saver.restore(modeldir, step=step, map_location=device)
 
